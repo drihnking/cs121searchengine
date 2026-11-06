@@ -5,6 +5,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 from nltk.stem import PorterStemmer
+from collections import defaultdict
 
 STEMMER = PorterStemmer()
 TOKEN_PATTERN = re.compile(r'[a-zA-Z0-9]+')
@@ -13,26 +14,38 @@ IMPORTANT_TAGS = ('title', 'h1', 'h2', 'h3', 'b', 'strong')
 def find_files(p: Path):
     """
     Finds all files in directory and subdirectories recursively
+    Maps each document_id to its parsed data
+    documents = { document_id : }
     """
-    # Turns folder into a list of Path files
-    for item in p.iterdir():
-        if item.is_dir():
-            find_files(item)
+    # Maps each numeric document_id to its parsed document data
+    documents = []
 
-        elif item.is_file() and item.suffix.lower() == '.json':
-            try:
-                read_file(item)
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                print(f'Skipping {item}: {exc}', file = sys.stderr)
+    def visit(directory: Path):
+        # Turns folder into a list of Path files
+        for item in directory.iterdir():
+            if item.is_dir():
+                visit(item)
+
+            # Only JSON files to index
+            elif item.is_file() and item.suffix.lower() == '.json':
+                try:
+                    # Assign one ID to each successfully parsed document
+                    documents.append(read_file(item))
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    # Skip invalid files
+                    print(f'Skipping {item}: {exc}', file = sys.stderr)
+
+    visit(p)
+    return documents
 
 def read_file(p: Path):
     """
     Opens and reads file, then parses HTML content.
     """
     with p.open('r', encoding = 'utf-8-sig') as file:
-        return parse_file(file, document_id = str(p))
+        return parse_file(file)
 
-def parse_file(file, document_id = None):
+def parse_file(file):
     """
     Extract page data and deal with missing or malformed HTML
     """
@@ -72,7 +85,7 @@ def parse_file(file, document_id = None):
     # -------------------------------------------------------
 
     return {
-        'document_id': document_id, # To do: replace with stable numeric ID if necessary
+        #'url_id': document_id, # To do: replace with stable numeric ID if necessary
         'url': url.split('#', 1)[0] if isinstance(url, str) else '',
         'tokens': tokens,
         'important_tokens': important_tokens
@@ -87,6 +100,29 @@ def tokenize_and_stem(text: str) -> list[str]:
     tokens = TOKEN_PATTERN.findall(text.lower())
     return [STEMMER.stem(token) for token in tokens]
 
+
+def build_index(documents):
+    '''
+    Maps each token to the set of document_ids containing that token
+    inverted_index = { token : set of document_ids }
+    url_mapping = { document_id : url}
+    '''
+    # Maps each token to the set of document_ids containing that token
+    inverted_index = defaultdict(set) # dictionary with key=token, value = docid
+    
+    # Maps each document_id back to its url for search results
+    url_mapping = {}
+
+    # Parse each text document in "documents" list
+    for document_id, document in enumerate(documents):
+        url_mapping[document_id] = document['url']
+        # Use set to prevent duplicate tokens
+        unique_tokens = set(document['tokens'])
+        for token in unique_tokens:
+            inverted_index[token].add(document_id)
+    
+    return inverted_index, url_mapping
+
 # Main function to run when gathering data.
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -94,4 +130,13 @@ if __name__ == '__main__':
     corpus_path = Path(sys.argv[1])
     if not corpus_path.is_dir():
         raise SystemExit(f'Not a directory: {corpus_path}')
-    find_files(corpus_path)
+
+    # Read and parse all files
+    documents = find_files(corpus_path)
+
+    # Build the in-memory indexes
+    inverted_index, url_mapping = build_index(documents)
+
+    print(inverted_index)
+
+
