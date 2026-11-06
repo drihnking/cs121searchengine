@@ -1,17 +1,32 @@
-# This is a sample Python script.
+from pathlib import Path
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+def find_files(p: Path):
+    """
+    Finds all files in directory and subdirectories
+    """
+    # Turns folder into a list of Path files
+    all_paths = list(p.iterdir())
 
+    for item in list_of_paths:
+        if item.is_file():
+            read_file(item)
+        elif item.is_dir():
+            find_files(item)
+        else:
+            raise FileNotFoundError("Path links to neither file nor directory") # TEMPORARY RAISED ERROR
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+def read_file(p: Path):
+    """
+    Opens and reads file
+    """
+    try: 
+        with open(p, "r") as file:
+            parse_file(file)
+    except:
+        raise FileNotFoundError("File could not be read") # TEMPORARY RAISED ERROR
 
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
-
+def parse_file(file: io.TextIOWrapper):
+    """
+    Parses file and deals with broken HTML
+    """
+    pass
