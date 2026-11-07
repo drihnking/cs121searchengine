@@ -11,6 +11,13 @@ STEMMER = PorterStemmer()
 TOKEN_PATTERN = re.compile(r'[a-zA-Z0-9]+')
 IMPORTANT_TAGS = ('title', 'h1', 'h2', 'h3', 'b', 'strong')
 
+# If html5lib is not installed, fall back to built-in html.parser
+try:
+    import html5lib
+    parser = 'html5lib'
+except ImportError:
+    parser = 'html.parser'
+
 def find_files(p: Path):
     """
     Finds all files in directory and subdirectories recursively
@@ -58,12 +65,7 @@ def parse_file(file):
     if not isinstance(html, str):
         raise ValueError('Page content must be a string')
 
-    # If html5lib is not installed, fall back to built-in html.parser
-    try:
-        import html5lib
-        parser = 'html5lib'
-    except ImportError:
-        parser = 'html.parser'
+
     soup = BeautifulSoup(html, parser)
 
     # Scripts and styles are not visible page text; should not be indexed
@@ -127,13 +129,38 @@ def build_index(documents):
     
     return inverted_index, url_mapping
 
+def save_index(inverted_index, url_mapping, output_directory: Path):
+    """ Save the inverted index and document ID to URL map as JSON files. """
+    output_directory.mkdir(parents = True, exist_ok = True)
+    index_path = output_directory / 'inverted_index.json'
+    urls_path = output_directory / 'url_mapping.json'
+
+    # compact separators will reduce index disk usage; sort the terms for ability to replicate later
+    with index_path.open('w', encoding = 'utf-8') as file:
+        json.dump(inverted_index, file, ensure_ascii = False, separators = (',', ':'), sort_keys = True)
+    with urls_path.open('w', encoding = 'utf-8') as file:
+        json.dump(url_mapping, file, ensure_ascii = False, separators = (',', ':'))
+
+    return index_path, urls_path
+
+def get_index_statistics(document_count, inverted_index, index_path: Path):
+    """Compute the three statistics asked by Milestone 1. """
+    return {
+        'documents': document_count,
+        'unique_tokens': len(inverted_index),
+        'index_size_kb': index_path.stat().st_size / 1024 #KB is 1024 bytes
+    }
+
 # Main function to run when gathering data.
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        raise SystemExit('Usage: python main.py /path/to/developer.zip')
+    if len(sys.argv) not in (2, 3):
+
+        raise SystemExit('Usage: python main.py /path/to/extracted/file [output_directory]')
     corpus_path = Path(sys.argv[1])
     if not corpus_path.is_dir():
         raise SystemExit(f'Not a directory: {corpus_path}')
+
+    output_directory = Path(sys.argv[2]) if len(sys.argv) == 3 else Path('index_output')
 
     # Read and parse all files
     documents = find_files(corpus_path)
@@ -141,6 +168,14 @@ if __name__ == '__main__':
     # Build the in-memory indexes
     inverted_index, url_mapping = build_index(documents)
 
-    print(inverted_index)
+    # Save index and URL mapping and then calculate statistics for the MS1 report.
+    index_path, urls_path = save_index(inverted_index, url_mapping, output_directory)
+    stats = get_index_statistics(len(documents), inverted_index, index_path)
+
+    print(f"Indexed documents: {stats['documents']:,}")
+    print(f"Unique stemmed tokens: {stats['unique_tokens']:,}")
+    print(f"Index size: {stats['index_size_kb']:,.2f} KB")
+    print(f'Index saved to: {index_path}')
+    print(f'URL mapping saved to: {urls_path}')
 
 
