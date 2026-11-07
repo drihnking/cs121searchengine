@@ -11,10 +11,10 @@ STEMMER = PorterStemmer()
 TOKEN_PATTERN = re.compile(r'[a-zA-Z0-9]+')
 IMPORTANT_TAGS = ('title', 'h1', 'h2', 'h3', 'b', 'strong')
 
-# If html5lib is not installed, fall back to built-in html.parser
+# If lxml is not installed, fall back to built-in html.parser
 try:
-    import html5lib
-    parser = 'html5lib'
+    import lxml
+    parser = 'lxml'
 except ImportError:
     parser = 'html.parser'
 
@@ -38,6 +38,8 @@ def find_files(p: Path):
                 try:
                     # Assign one ID to each successfully parsed document
                     documents.append(read_file(item))
+                    if len(documents) % 1000 == 0:
+                        print(f"Processed {len(documents):,} documents...", flush = True)
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
                     # Skip invalid files
                     print(f'Skipping {item}: {exc}', file = sys.stderr)
