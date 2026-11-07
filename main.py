@@ -103,12 +103,12 @@ def tokenize_and_stem(text: str) -> list[str]:
 
 def build_index(documents):
     '''
-    Maps each token to the set of document_ids containing that token
+    Maps each token to the list of document_ids containing that token
     inverted_index = { token : set of document_ids }
     url_mapping = { document_id : url}
     '''
-    # Maps each token to the set of document_ids containing that token
-    inverted_index = defaultdict(set) # dictionary with key=token, value = docid
+    # Maps each token to the list of document_ids containing that token
+    inverted_index = defaultdict(list) # dictionary with key=token, value = docid
     
     # Maps each document_id back to its url for search results
     url_mapping = {}
@@ -116,10 +116,14 @@ def build_index(documents):
     # Parse each text document in "documents" list
     for document_id, document in enumerate(documents):
         url_mapping[document_id] = document['url']
-        # Use set to prevent duplicate tokens
-        unique_tokens = set(document['tokens'])
-        for token in unique_tokens:
-            inverted_index[token].add(document_id)
+        
+        # Count frequency of tokens in document
+        term_frequencies = {}
+        for token in document['tokens']:
+            term_frequencies[token] = term_frequencies.get(token, 0) + 1
+
+        for token, term_frequency in term_frequencies.items():
+            inverted_index[token].append((document_id, term_frequency))
     
     return inverted_index, url_mapping
 
