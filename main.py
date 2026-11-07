@@ -232,201 +232,34 @@ def tokenize_and_stem(text: str) -> list[str]:
     lowercase, tokenize and stem all alphanumeric words.
     """
     tokens = TOKEN_PATTERN.findall(text.lower())
-
-    return [stem_token(token) for token in tokens]
-
-def save_partial(inverted_index, path):
-    """
-    save a partial inverted index to disk.
-
-    each line contains a sorted token and its postings.
-    """
-    with path.open('w', encoding='utf-8') as file:
-        for token in sorted(inverted_index):
-
-            postings = inverted_index[token]
-
-            record = {
-                'token': token,
-                'postings': [
-                    [doc_id, values['tf'], values['important_tf']]
-                    for doc_id, values in sorted(postings.items())
-                ]
-            }
-
-            file.write(json.dumps(record) + '\n')
+    return [STEMMER.stem(token) for token in tokens]
 
 
-def build_index(documents, output_dir, stats, chunk_docs=500):
-    """
-    build the inverted index incrementally
+def build_index(documents):
+    '''
+    Maps each token to the list of document_ids containing that token
+    inverted_index = { token : set of document_ids }
+    url_mapping = { document_id : url}
+    '''
+    # Maps each token to the list of document_ids containing that token
+    inverted_index = defaultdict(list) # dictionary with key=token, value = docid
+    
+    # Maps each document_id back to its url for search results
+    url_mapping = {}
 
-    flush the index to disk after every chunk_docs pages,
-    then merge all partial indexes into a final index
-    """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Parse each text document in "documents" list
+    for document_id, document in enumerate(documents):
+        url_mapping[document_id] = document['url']
+        
+        # Count frequency of tokens in document
+        term_frequencies = {}
+        for token in document['tokens']:
+            term_frequencies[token] = term_frequencies.get(token, 0) + 1
 
-    index_path = output_dir / 'inverted_index.jsonl'
-    lexicon_path = output_dir / 'lexicon.jsonl'
-    urls_path = output_dir / 'url_mapping.jsonl'
-    stats_path = output_dir / 'index_stats.json'
-
-    # temporary partial indexes are deleted after merging
-    with tempfile.TemporaryDirectory(
-        prefix='partials_',
-        dir=output_dir
-    ) as temp_dir:
-
-        temp_dir = Path(temp_dir)
-        partial_paths = []
-
-        inverted_index = defaultdict(dict)
-        chunk_count = 0
-        doc_id = 0
-
-        with urls_path.open('w', encoding='utf-8') as url_file:
-
-            for document in documents:
-
-                # save each document id and url immediately
-                url_file.write(json.dumps({
-                    'doc_id': doc_id,
-                    'url': document['url']
-                }) + '\n')
-
-                token_counts = Counter(document['tokens'])
-                important_counts = Counter(
-                    document['important_tokens']
-                )
-
-                # add postings to the current partial index
-                for token, tf in token_counts.items():
-                    inverted_index[token][doc_id] = {
-                        'tf': tf,
-                        'important_tf': important_counts.get(
-                            token, 0
-                        )
-                    }
-
-                doc_id += 1
-                chunk_count += 1
-
-                # write partial index and free its memory
-                if chunk_count >= chunk_docs:
-                    partial_path = temp_dir / (
-                        f'partial_{len(partial_paths):05d}.jsonl'
-                    )
-
-                    save_partial(inverted_index, partial_path)
-                    partial_paths.append(partial_path)
-
-                    print(
-                        f"Indexed {doc_id} documents, "
-                        f"flushed partial index {len(partial_paths)}",
-                        flush=True
-                    )
-
-                    inverted_index.clear()
-                    chunk_count = 0
-
-            # flush remaining documents
-            if chunk_count > 0:
-                partial_path = temp_dir / (
-                    f'partial_{len(partial_paths):05d}.jsonl'
-                )
-
-                save_partial(inverted_index, partial_path)
-                partial_paths.append(partial_path)
-                inverted_index.clear()
-
-        stats['partial_indexes_written'] = len(partial_paths)
-
-        # merge the partial indexes while they still exist
-        stats['unique_tokens'] = merge_partials(
-            partial_paths,
-            index_path,
-            lexicon_path
-        )
-
-    stats['index_size_bytes'] = sum(
-        path.stat().st_size
-        for path in (index_path, lexicon_path, urls_path)
-    )
-
-    stats['index_size_kb'] = round(
-        stats['index_size_bytes'] / 1024, 2
-    )
-
-    with stats_path.open('w', encoding='utf-8') as file:
-        json.dump(stats, file, indent=2)
-
-    return stats
-
-def merge_partials(partial_paths, index_path, lexicon_path):
-    """
-    merge sorted partial indexes into one final index
-
-    also create a lexicon containing the byte offset
-    of each token's postings in the final index
-    """
-
-    def read_records(path):
-        with path.open('r', encoding='utf-8') as file:
-            for line in file:
-                yield json.loads(line)
-
-    # heapq.merge combines sorted iterators incrementally
-    streams = [
-        read_records(path)
-        for path in partial_paths
-    ]
-
-    merged = heapq.merge(
-        *streams,
-        key=lambda record: record['token']
-    )
-
-    unique_tokens = 0
-
-    # binary output makes byte offsets exact
-    with index_path.open('wb') as index_file, \
-         lexicon_path.open('w', encoding='utf-8') as lexicon_file:
-
-        # group all records for the same token
-        for token, group in groupby(
-            merged,
-            key=lambda record: record['token']
-        ):
-            postings = []
-
-            for record in group:
-                postings.extend(record['postings'])
-
-            postings.sort(key=lambda posting: posting[0])
-
-            offset = index_file.tell()
-
-            record = {
-                'token': token,
-                'postings': postings
-            }
-
-            line = (
-                json.dumps(record) + '\n'
-            ).encode('utf-8')
-
-            index_file.write(line)
-
-            # save the location of this token
-            lexicon_file.write(json.dumps({
-                'token': token,
-                'offset': offset
-            }) + '\n')
-
-            unique_tokens += 1
-
-    return unique_tokens
+        for token, term_frequency in term_frequencies.items():
+            inverted_index[token].append((document_id, term_frequency))
+    
+    return inverted_index, url_mapping
 
 # Main function to run when gathering data.
 if __name__ == '__main__':
