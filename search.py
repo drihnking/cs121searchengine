@@ -60,14 +60,14 @@ def search_loop(index: dict, url_mapping: dict) -> None:
             print('Please enter a query with at least one letter or digit.')
             continue
 
-        # Todo:
+        # To do:
         # Implement boolean_and_search(tokens,index)
         # Use get_postings(index, token) to get each term's postings
         # If any term is missing, return no matches, otherwise intersect
         # the document IDs so results contain all query terms
         # matching_document_ids = boolean_and_search(tokens, index)
 
-        # Todo:
+        # To do:
         # Display matching URLs using url_mapping
         # JSON object keys are strings, so use url_mapping.get(str(doc_id)).
         # display_results(matching_document_ids, url_mapping)
@@ -87,7 +87,7 @@ def main() -> None:
         )
 
     # This initial implementation loads the entire JSON index into memory.
-    # TODO: read individual postings from disk instead.
+    # To do: read individual postings from disk instead.
     print('Loading index into memory...', flush = True)
     index = load_index(index_path)
     url_mapping = load_url_mapping(mapping_path)
