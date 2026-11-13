@@ -238,12 +238,27 @@ def tokenize_and_stem(text: str) -> list[str]:
 def build_index(documents):
     '''
     Maps each token to the list of document_ids containing that token
-    inverted_index = { token : set of document_ids }
-    url_mapping = { document_id : url}
+    
+    Normal token:
+    inverted_index = {
+        token: [(document_id, term_frequency), ...]
+    }
+
+    Important-tag inverted indexes:
+    important_index = {
+        token: [(document_id, term_frequency), ...]
+    }
+
+    url_mapping = {
+        document_id: url
+    }
     '''
     # Maps each token to the list of document_ids containing that token
     inverted_index = defaultdict(list) # dictionary with key=token, value = docid
     
+    # Maps each important token to the list of document_ids containing it
+    important_index = defaultdict(list)
+
     # Maps each document_id back to its url for search results
     url_mapping = {}
 
@@ -251,15 +266,21 @@ def build_index(documents):
     for document_id, document in enumerate(documents):
         url_mapping[document_id] = document['url']
         
-        # Count frequency of tokens in document
+        # Count all terms in the document body.
         term_frequencies = {}
         for token in document['tokens']:
             term_frequencies[token] = term_frequencies.get(token, 0) + 1
 
         for token, term_frequency in term_frequencies.items():
             inverted_index[token].append((document_id, term_frequency))
+
+        # Count terms appearing in important HTML tags.
+        important_frequencies = Counter(document['important_tokens'])
+
+        for token, frequency in important_frequencies.items():
+            important_index[token].append((document_id, frequency))
     
-    return inverted_index, url_mapping
+    return inverted_index, important_index, url_mapping
 
 # Main function to run when gathering data.
 if __name__ == '__main__':
