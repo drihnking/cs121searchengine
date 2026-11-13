@@ -83,6 +83,19 @@ def _intersect(p1: list[int], p2: list[int]) -> list[int]:
 
     return answer
 
+def display_results(doc_ids: list[int], url_mapping: dict):
+    """
+    Takes a list of docIds and prints its respectively mapped URL
+    """
+    if not doc_ids:
+        print('No results.')
+        return
+
+    for doc_id in doc_ids:
+        url = url_mapping.get(str(doc_id))
+
+        if url is not None:
+            print(url)
 
 def search_loop(index: dict, url_mapping: dict) -> None:
     """ Accepts console queries and shows token statistics """
@@ -110,11 +123,11 @@ def search_loop(index: dict, url_mapping: dict) -> None:
         # If any term is missing, return no matches, otherwise intersect
         # the document IDs so results contain all query terms
         matching_document_ids = boolean_and_search(tokens, index)
-
+    
         # To do:
         # Display matching URLs using url_mapping
         # JSON object keys are strings, so use url_mapping.get(str(doc_id)).
-        # display_results(matching_document_ids, url_mapping)
+        display_results(matching_document_ids, url_mapping)
 
 def main() -> None:
     if len(sys.argv) > 2:
