@@ -41,6 +41,64 @@ def get_postings(index: dict, token: str) -> list[tuple[int, int]]:
     postings = index.get(token, [])
     return [(int(document_id), int(frequency)) for document_id, frequency in postings]
 
+def boolean_and_search(tokens: list[str], index: dict) -> list[int]:
+    """
+    Returns a list of all the docIDs that match the query tokens
+    """
+    if not tokens:
+        return []
+
+    match = None
+    for token in tokens:
+        posting = get_postings(index, token)
+        doc_ids = [doc_id for doc_id, frequency in posting]
+
+        if match is None:
+            match = doc_ids
+        else:
+            match = _intersect(match, doc_ids)
+
+        # If match does not contain any doc_ids that fufill the query, immediately return
+        if not match:
+            return []
+        
+    return match
+
+def _intersect(p1: list[int], p2: list[int]) -> list[int]:
+    """
+    Compares two postings and returns a list of their matching docIDs
+    """
+    answer = []
+
+    i, k = 0, 0
+    while i<len(p1) and k<len(p2):
+        if p1[i]==p2[k]:
+            answer.append(p1[i])
+            i+=1
+            k+=1
+        elif p1[i]<p2[k]:
+            i+=1
+        else:
+            k+=1
+
+    return answer
+
+def display_results(doc_ids: list[int], url_mapping: dict):
+    """
+    Takes a list of docIds and prints its respectively mapped URL
+    """
+    if not doc_ids:
+        print('No results.')
+        return
+
+    i=1
+    for doc_id in doc_ids:
+        url = url_mapping.get(str(doc_id))
+
+        if url is not None:
+            print(f'{i}. {url}')
+            i+=1
+
 def search_loop(index: dict, url_mapping: dict) -> None:
     """ Accepts console queries and shows token statistics """
     print("Search component is ready. Type a query or 'exit' to quit.")
@@ -50,6 +108,7 @@ def search_loop(index: dict, url_mapping: dict) -> None:
             query = input('Search query: ').strip()
         except (EOFError, KeyboardInterrupt):
             print('\nGoodbye!')
+            break
 
         if query.lower() in ('exit', 'quit'):
             print('Goodbye!')
@@ -65,12 +124,12 @@ def search_loop(index: dict, url_mapping: dict) -> None:
         # Use get_postings(index, token) to get each term's postings
         # If any term is missing, return no matches, otherwise intersect
         # the document IDs so results contain all query terms
-        # matching_document_ids = boolean_and_search(tokens, index)
-
+        matching_document_ids = boolean_and_search(tokens, index)
+    
         # To do:
         # Display matching URLs using url_mapping
         # JSON object keys are strings, so use url_mapping.get(str(doc_id)).
-        # display_results(matching_document_ids, url_mapping)
+        display_results(matching_document_ids, url_mapping)
 
 def main() -> None:
     if len(sys.argv) > 2:
