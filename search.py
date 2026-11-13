@@ -91,11 +91,13 @@ def display_results(doc_ids: list[int], url_mapping: dict):
         print('No results.')
         return
 
+    i=1
     for doc_id in doc_ids:
         url = url_mapping.get(str(doc_id))
 
         if url is not None:
-            print(url)
+            print(f'{i}. {url}')
+            i+=1
 
 def search_loop(index: dict, url_mapping: dict) -> None:
     """ Accepts console queries and shows token statistics """
