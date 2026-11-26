@@ -4,13 +4,14 @@ import argparse
 import json
 import math
 import os
-import sqlite3
+import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit, urlunsplit, unquote
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 from main import tokenize_and_stem
+from anchor_storage import flush_anchor_chunk, merge_anchor_chunks
 
 
 def canonical_url(url):
@@ -59,77 +60,74 @@ def make_url_lookup(urls):
     return lookup
 
 
-def build_link_data(corpus, output_dir, max_links_per_page=10000):
+def build_link_data(corpus, output_dir, max_links_per_page=10000,
+                    flush_pages=250, flush_pairs=150000):
     corpus, output_dir = Path(corpus), Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    # use the same document ids as the main index
     urls = load_document_urls(output_dir / 'url_mapping.jsonl')
     lookup = make_url_lookup(urls)
     graph_path = output_dir / 'link_graph.jsonl'
-    db_path = output_dir / 'anchor_index.sqlite3'
-    if db_path.exists():
-        db_path.unlink()
-    # store anchor words in sqlite so searches can look them up later
-    db = sqlite3.connect(db_path)
-    db.execute('PRAGMA journal_mode=WAL')
-    db.execute('CREATE TABLE anchors(token TEXT NOT NULL, doc_id INTEGER NOT NULL, tf INTEGER NOT NULL, PRIMARY KEY(token, doc_id)) WITHOUT ROWID')
-    db.execute('CREATE INDEX anchor_doc_idx ON anchors(doc_id)')
     seen = set()
-    total_edges = 0
-    scanned = 0
-    with graph_path.open('w', encoding='utf-8') as out:
-        for root, dirs, names in os.walk(corpus):
-            dirs.sort()
-            for name in sorted(names):
-                if not name.lower().endswith('.json'):
-                    continue
-                path = Path(root) / name
-                try:
-                    with path.open(encoding='utf-8-sig') as f:
-                        page = json.load(f)
-                    url, html = page.get('url', ''), page.get('content', '')
-                    if not isinstance(url, str) or not isinstance(html, str):
+    total_edges = scanned = skipped = 0
+    counts = Counter()
+    partial_paths = []
+
+    # Temporary partials are deleted after a successful or failed build.
+    with tempfile.TemporaryDirectory(prefix='anchor_parts_') as scratch:
+        partial_dir = Path(scratch)
+        with graph_path.open('w', encoding='utf-8') as out:
+            for root, dirs, names in os.walk(corpus):
+                dirs.sort()
+                for name in sorted(names):
+                    if not name.lower().endswith('.json'):
                         continue
-                    source = next((lookup[k] for k in url_keys(url) if k in lookup), None)
-                    # skip pages that did not make it into our index
-                    if source is None or source in seen:
-                        continue
-                    seen.add(source)
-                    scanned += 1
-                    soup = BeautifulSoup(html, 'html.parser')
-                    destinations = set()
-                    anchor_counts = Counter()
-                    for a in soup.find_all('a', href=True, limit=max_links_per_page):
-                        href = a.get('href', '')
-                        if not isinstance(href, str):
+                    path = Path(root) / name
+                    try:
+                        with path.open(encoding='utf-8-sig') as stream:
+                            page = json.load(stream)
+                        if not isinstance(page, dict):
                             continue
-                        target_url = urljoin(url, href)
-                        target = next((lookup[k] for k in url_keys(target_url) if k in lookup), None)
-                        if target is None or target == source:
+                        url, html = page.get('url', ''), page.get('content', '')
+                        if not isinstance(url, str) or not isinstance(html, str):
                             continue
-                        destinations.add(target)
-                        # ignore overly long anchor text
-                        tokens = tokenize_and_stem(a.get_text(' ', strip=True)[:500])[:40]
-                        for token in tokens:
-                            anchor_counts[(token, target)] += 1
-                    out.write(json.dumps({'doc_id': source, 'outlinks': sorted(destinations)}) + '\n')
-                    total_edges += len(destinations)
-                    if anchor_counts:
-                        db.executemany(
-                            'INSERT INTO anchors(token, doc_id, tf) VALUES(?, ?, ?) '
-                            'ON CONFLICT(token, doc_id) DO UPDATE SET tf = tf + excluded.tf',
-                            [(token, target, tf) for (token, target), tf in anchor_counts.items()]
-                        )
-                    if scanned % 500 == 0:
-                        db.commit()
-                        print(f'Link pass: {scanned:,}/{len(urls):,} pages, {total_edges:,} edges', flush=True)
-                except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
-                    print(f'Skipped {path}: {exc}', flush=True)
-    db.commit()
-    n_anchor = db.execute('SELECT COUNT(*) FROM anchors').fetchone()[0]
-    db.close()
+                        source = next((lookup[k] for k in url_keys(url) if k in lookup), None)
+                        if source is None or source in seen:
+                            continue
+                        # Mark as seen only after completing the page successfully.
+                        soup = BeautifulSoup(html, 'html.parser')
+                        destinations = set()
+                        anchor_counts = Counter()
+                        for anchor in soup.find_all('a', href=True, limit=max_links_per_page):
+                            href = anchor.get('href', '')
+                            if not isinstance(href, str):
+                                continue
+                            target_url = urljoin(url, href)
+                            target = next((lookup[k] for k in url_keys(target_url) if k in lookup), None)
+                            if target is None or target == source:
+                                continue
+                            destinations.add(target)
+                            for token in tokenize_and_stem(anchor.get_text(' ', strip=True)[:500])[:40]:
+                                anchor_counts[(token, target)] += 1
+                        out.write(json.dumps({'doc_id': source, 'outlinks': sorted(destinations)}) + '\n')
+                        counts.update(anchor_counts)
+                        seen.add(source)
+                        scanned += 1
+                        total_edges += len(destinations)
+                        if scanned % flush_pages == 0 or len(counts) >= flush_pairs:
+                            if counts:
+                                partial_paths.append(flush_anchor_chunk(counts, partial_dir, len(partial_paths)))
+                        if scanned % 500 == 0:
+                            print(f'Link pass: {scanned:,}/{len(urls):,} pages, {total_edges:,} edges', flush=True)
+                    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                        skipped += 1
+                        print(f'Skipped {path}: {exc}', flush=True)
+        if counts:
+            partial_paths.append(flush_anchor_chunk(counts, partial_dir, len(partial_paths)))
+        anchor_stats = merge_anchor_chunks(partial_paths, output_dir)
+
+    # To do: benchmark peak memory and runtime on the full developer collection.
     return {'indexed_documents': len(urls), 'pages_scanned': scanned,
-            'edges': total_edges, 'anchor_postings': n_anchor}
+            'edges': total_edges, 'files_skipped': skipped, **anchor_stats}
 
 
 def load_graph(path, document_count=None):
@@ -143,6 +141,14 @@ def load_graph(path, document_count=None):
             graph.setdefault(doc_id, [])
     return graph
 
+def build_reverse_graph(graph):
+    """Compute incoming edges ONCE when initializing the search engine."""
+    reverse = defaultdict(list)
+    for source, targets in graph.items():
+        for target in set(targets):
+            if target != source:
+                reverse[target].append(source)
+    return dict(reverse)
 
 def compute_pagerank(graph, damping=0.85, iterations=50, tolerance=1e-10):
     """calculate pagerank, including pages with no outgoing links."""
@@ -170,42 +176,39 @@ def compute_pagerank(graph, damping=0.85, iterations=50, tolerance=1e-10):
     return rank
 
 
-def compute_hits(graph, seed_docs, max_seeds=200, max_base=2000, iterations=25):
-    """calculate HITS authority scores for the search results."""
+def compute_hits(graph, seed_docs, max_seeds=200, max_base=2000,
+                 iterations=25, reverse_graph=None):
+    """HITS authority scores for query results; optional precomputed reverse graph."""
     roots = list(dict.fromkeys(seed_docs))[:max_seeds]
     if not roots:
         return {}
     roots_set = set(roots)
-    reverse = defaultdict(list)
-    for source, targets in graph.items():
-        for target in targets:
-            reverse[target].append(source)
+    reverse = reverse_graph if reverse_graph is not None else build_reverse_graph(graph)
     base = set(roots)
-    # include nearby linked pages, but keep the set manageable
+    # Preserve the original bounded-base heuristic; never exceed max_base.
     for source in roots:
         for neighbor in sorted(set(graph.get(source, ())) | set(reverse.get(source, ()))):
-            base.add(neighbor)
-            if len(base) >= max_base:
+            if len(base) >= max(max_base, len(roots_set)):
                 break
-        if len(base) >= max_base:
+            base.add(neighbor)
+        if len(base) >= max(max_base, len(roots_set)):
             break
     adjacency = {u: [v for v in graph.get(u, ()) if v in base and v != u] for u in base}
     authorities = dict.fromkeys(base, 1.0)
     hubs = dict.fromkeys(base, 1.0)
-    # alternate between updating authorities and hubs
     for _ in range(iterations):
         a = dict.fromkeys(base, 0.0)
         for source, targets in adjacency.items():
             for target in targets:
                 a[target] += hubs[source]
         norm = math.sqrt(sum(x*x for x in a.values())) or 1.0
-        a = {u: x / norm for u, x in a.items()}
+        a = {u: x/norm for u, x in a.items()}
         h = {u: sum(a[v] for v in targets) for u, targets in adjacency.items()}
         norm = math.sqrt(sum(x*x for x in h.values())) or 1.0
-        h = {u: x / norm for u, x in h.items()}
+        h = {u: x/norm for u, x in h.items()}
         authorities, hubs = a, h
     best = max(authorities.values(), default=0) or 1.0
-    return {u: authorities.get(u, 0) / best for u in roots_set}
+    return {u: authorities.get(u, 0)/best for u in roots_set}
 
 
 def build_all(corpus, output_dir):
