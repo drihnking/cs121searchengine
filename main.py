@@ -201,8 +201,8 @@ def parse_file(file):
     if not isinstance(html, str):
         raise ValueError('Page content must be a string')
 
-    # use the faster built-in html parser
-    soup = BeautifulSoup(html, 'html.parser')
+    # use the lxml html parser
+    soup = BeautifulSoup(html, 'lxml')
 
     # Scripts and styles are not visible page text; should not be indexed
     for tag in soup(['script', 'style', 'noscript', 'template']):
