@@ -6,6 +6,7 @@ import argparse
 import heapq
 import os 
 import tempfile
+import time
 
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -83,6 +84,8 @@ def find_files(p: Path, stats):
     read documents one at a time and skip duplicate pages.
     yield accepted documents without storing all their tokens.
     """
+    parsing_time = 0 # tracks the time taken to parse every document
+
     seen_urls = set()
     fingerprints = []
     bands = defaultdict(set)
@@ -101,7 +104,12 @@ def find_files(p: Path, stats):
             stats['files_seen'] += 1
 
             try:
+                start = time.perf_counter() # timer
+
                 document = read_file(path)
+
+                parsing_time += time.perf_counter() - start
+
                 url = document['url']
 
                 if not url:
@@ -170,6 +178,8 @@ def find_files(p: Path, stats):
             except (OSError, ValueError, TypeError, UnicodeError) as exc:
                 stats['invalid_files'] += 1
                 print(f"Skipping {path}: {exc}", file=sys.stderr)
+    
+    print(f"Time taken to parse all documents: {parsing_time * 1000:.2f} ms\n")
 
 def read_file(p: Path):
     """
