@@ -11,6 +11,7 @@ To run this file:
 import json
 import sys
 import math
+import time
 
 from pathlib import Path
 from main import tokenize_and_stem, make_ngram_key
@@ -374,9 +375,15 @@ def search_loop(index, url_mapping, total_docs, extras=None):
             print("Please enter a valid query.")
             continue
 
+        start = time.perf_counter()
+
         match_count, ranked_results = execute_query(
             query, index, url_mapping, total_docs, extras
         )
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        print(f"Response time: {elapsed_ms:.2f} ms")
+
         if not match_count:
             print("No matching documents found.")
             continue
