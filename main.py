@@ -229,10 +229,10 @@ def stem_token(token):
 
 def tokenize_and_stem(text: str) -> list[str]:
     """
-    lowercase, tokenize and stem all alphanumeric words.
+    downcase, tokenize and stem all alphanumeric words.
     """
     tokens = TOKEN_PATTERN.findall(text.lower())
-    return [STEMMER.stem(token) for token in tokens]
+    return [stem_token(token) for token in tokens]
 
 def make_ngram_key(tokens):
     """
